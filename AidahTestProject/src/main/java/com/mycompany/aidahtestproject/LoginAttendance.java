@@ -39,7 +39,6 @@ public class LoginAttendance extends JFrame {
         checkForActiveSession();
     }
 
-    // Default constructor
     public LoginAttendance() {
         this(new Employee("TEST", "Test User", "Manager", "pass"));
     }
@@ -135,14 +134,17 @@ public class LoginAttendance extends JFrame {
                 JOptionPane.showMessageDialog(this, "Please Clock In first!");
                 return;
             }
+            // 1. Get current time for Clock Out
             Attendance session = new Attendance(currentUser.getId(), currentUser.getName());
             session.performClockOut(); 
             
-            boolean success = updateAttendanceRecord(currentUser.getId(), session.getClockOutString());
+            // 2. Update Record AND Get the calculated hours back
+            double hoursWorked = updateAttendanceRecord(currentUser.getId(), session.getClockOutString());
             
-            if (success) {
+            if (hoursWorked >= 0) {
                 activeSessions.remove(currentUser.getId());
-                JOptionPane.showMessageDialog(this, "Clocked Out Successfully.\nHours: " + String.format("%.2f", session.getHoursWorked()));
+                // 3. Display the HOURS returned from the FILE calculation
+                JOptionPane.showMessageDialog(this, "Clocked Out Successfully.\nHours Worked: " + String.format("%.2f", hoursWorked));
             } else {
                 JOptionPane.showMessageDialog(this, "Error updating attendance file.");
             }
@@ -150,7 +152,7 @@ public class LoginAttendance extends JFrame {
 
         salesBtn.addActionListener(e -> new SalesSystemGUI(this.currentUser).setVisible(true)); 
         stockCountBtn.addActionListener(e -> new StockCountGUI().setVisible(true));
-        stockMoveBtn.addActionListener(e -> new StockMovementGUI().setVisible(true));
+        stockMoveBtn.addActionListener(e -> new StockMovementGUI(currentUser).setVisible(true));
         analyticsBtn.addActionListener(e -> {
              if (currentUser.getRole().equalsIgnoreCase("Manager")) {
                 new SalesAnalytics(currentUser).setVisible(true);
@@ -173,17 +175,19 @@ public class LoginAttendance extends JFrame {
 
     // --- HELPER METHODS ---
 
-    private boolean updateAttendanceRecord(String userId, String clockOutTimeOnly) {
+    // CHANGED: Returns double (hours worked) instead of boolean
+    private double updateAttendanceRecord(String userId, String clockOutTimeOnly) {
         File file = new File(ATTENDANCE_FILE);
         List<String> lines = new ArrayList<>();
         boolean recordFound = false;
+        double calculatedHours = -1.0; // Default to error
+        
         DateTimeFormatter fullFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = br.readLine()) != null) {
                 
-                // NEW: Skip the header row so we don't crash calculating hours on words
                 if (line.startsWith("Employee ID")) {
                     lines.add(line);
                     continue;
@@ -200,16 +204,18 @@ public class LoginAttendance extends JFrame {
                             String dateStr = parts[2];
                             String timeInStr = parts[3];
                             
+                            // Parse Original In Time from File
                             LocalDateTime inTime = LocalDateTime.parse(dateStr + " " + timeInStr, fullFormatter);
+                            // Parse New Out Time
                             LocalDateTime outTime = LocalDateTime.parse(dateStr + " " + clockOutTimeOnly, fullFormatter);
                             
                             if (outTime.isBefore(inTime)) outTime = outTime.plusDays(1);
 
                             long minutes = Duration.between(inTime, outTime).toMinutes();
-                            double hours = minutes / 60.0;
+                            calculatedHours = minutes / 60.0; // Store the result
 
                             String updatedLine = String.format("%s,%s,%s,%s,%s,%.2f", 
-                                    userId, name, dateStr, timeInStr, clockOutTimeOnly, hours);
+                                    userId, name, dateStr, timeInStr, clockOutTimeOnly, calculatedHours);
                             
                             lines.add(updatedLine);
                             recordFound = true;
@@ -225,7 +231,7 @@ public class LoginAttendance extends JFrame {
             }
         } catch (IOException e) {
             e.printStackTrace();
-            return false;
+            return -1.0;
         }
 
         if (recordFound) {
@@ -234,10 +240,10 @@ public class LoginAttendance extends JFrame {
                     bw.write(s);
                     bw.newLine();
                 }
-                return true;
-            } catch (IOException e) { return false; }
+                return calculatedHours; // Return the hours we calculated!
+            } catch (IOException e) { return -1.0; }
         }
-        return false; 
+        return -1.0; 
     }
     
     private void checkForActiveSession() {
@@ -247,15 +253,14 @@ public class LoginAttendance extends JFrame {
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = br.readLine()) != null) {
-                // NEW: Skip header
                 if (line.startsWith("Employee ID")) continue;
 
                 String[] parts = line.split(",");
                 if (parts.length >= 5 && parts[0].equals(currentUser.getId())) {
-                     String existingOut = parts[4].trim();
-                     if (existingOut.equals("Active") || existingOut.equals("00:00") || existingOut.equals("null")) {
-                         activeSessions.put(currentUser.getId(), LocalDateTime.now()); 
-                     }
+                      String existingOut = parts[4].trim();
+                      if (existingOut.equals("Active") || existingOut.equals("00:00") || existingOut.equals("null")) {
+                          activeSessions.put(currentUser.getId(), LocalDateTime.now()); 
+                      }
                 }
             }
         } catch (IOException e) {}
